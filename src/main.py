@@ -1,11 +1,10 @@
 import pickle
-import argparse
-import shutil
-import os
 import random
-
-import tensorflow as tf
+import argparse
 import numpy as np
+import tensorflow as tf
+
+from model import Encoder
 
 global ARGS
 
@@ -25,21 +24,27 @@ def prepareHotVectors(train_tensor, labels_tensor):
   numberOfPatients = len(train_tensor)
   maxNumberOfAdmissions = np.max(nVisitsOfEachPatient_List)
 
-  x_hotvectors_tensorf = np.zeros((maxNumberOfAdmissions, numberOfPatients, ARGS.numberOfInputCodes)).astype(np.float64)
-  y_hotvectors_tensor = np.zeros((maxNumberOfAdmissions, numberOfPatients, ARGS.numberOfInputCodes)).astype(np.float64)
-  mask = np.zeros((maxNumberOfAdmissions, numberOfPatients)).astype(np.float64)
+  x_hotvectors_tensor = np.zeros((maxNumberOfAdmissions, numberOfPatients, ARGS.numberOfInputCodes)).astype(np.float32)
+  y_hotvectors_tensor = np.zeros((maxNumberOfAdmissions, numberOfPatients, ARGS.numberOfInputCodes)).astype(np.float32)
+  mask = np.zeros((maxNumberOfAdmissions, numberOfPatients)).astype(np.float32)
 
   for idx, (train_patient_matrix,label_patient_matrix) in enumerate(zip(train_tensor,labels_tensor)):
     for i_th_visit, visit_line in enumerate(train_patient_matrix[:-1]): #ignores the last admission, which is not part of the training
       for code in visit_line:
-        x_hotvectors_tensorf[i_th_visit, idx, code] = 1
+        x_hotvectors_tensor[i_th_visit, idx, code] = 1
     for i_th_visit, visit_line in enumerate(label_patient_matrix[1:]):  #label_matrix[1:] = all but the first admission slice, not used to evaluate (this is the answer)
       for code in visit_line:
         y_hotvectors_tensor[i_th_visit, idx, code] = 1
     mask[:nVisitsOfEachPatient_List[idx], idx] = 1.
 
   nVisitsOfEachPatient_List = np.array(nVisitsOfEachPatient_List, dtype=np.int32)
-  return x_hotvectors_tensorf, y_hotvectors_tensor, mask, nVisitsOfEachPatient_List
+
+  mask = tf.convert_to_tensor(mask, dtype=tf.float32)
+  x_hotvectors_tensor = tf.convert_to_tensor(x_hotvectors_tensor, dtype=tf.float32)
+  y_hotvectors_tensor = tf.convert_to_tensor(y_hotvectors_tensor, dtype=tf.float32)
+  nVisitsOfEachPatient_List = tf.convert_to_tensor(nVisitsOfEachPatient_List, dtype=tf.int32)
+
+  return x_hotvectors_tensor, y_hotvectors_tensor, mask, nVisitsOfEachPatient_List
 
 
 def loadData():
@@ -70,17 +75,31 @@ def loadData():
   return trainSet, testSet
 
 def buildModel():
-  return None
+  model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], embedding_dim=300)
+  optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.001)
+  cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
+  return model, optimizer, cross_entropy
 
 def evaluateModel():
   return None
+
+def applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPatient_List):
+  y = tf.transpose(y, [1,0,2])
+  with tf.GradientTape() as tape:
+    tape.watch(x)
+    predictions = model(x, mask)
+    loss_value = cross_entropy(y, predictions)
+
+  gradients = tape.gradient(loss_value, model.trainable_weights)
+  optimizer.apply_gradients(zip(gradients, model.trainable_weights))
+  return predictions, loss_value
 
 def trainModel():
   print("==> data loading")
   trainSet, testSet = loadData()
 
   print("==> model building")
-  _ = buildModel()
+  model, optimizer, cross_entropy = buildModel()
 
   print ("==> training and validation")
   batchSize = ARGS.batchSize
@@ -100,12 +119,16 @@ def trainModel():
     for index in random.sample(range(n_batches), n_batches):
       batchX = trainSet[0][index*batchSize:(index+1)*batchSize]
       batchY = trainSet[1][index*batchSize:(index + 1)*batchSize]
-      xf, yf, maskf, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
-      # xf += np.random.normal(0, 0.1, xf.shape)
+      x, y, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
+      x += np.random.normal(0, 0.1, x.shape)
 
-      # Train Step (TODO)
+      predictions, loss_value = applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPatient_List)
+      trainCrossEntropyVector.append(loss_value)
+      iteration += 1
 
-    # Best results
+    print('-> Epoch: %d, mean cross entropy considering %d TRAINING batches: %f' % (epoch_counter, n_batches, np.mean(trainCrossEntropyVector)))
+
+  # Best results
   print('--------------SUMMARY--------------')
   print('The best VALIDATION cross entropy occurred at epoch %d, the value was of %f ' % (
   bestValidationEpoch, bestValidationCrossEntropy))
@@ -251,7 +274,6 @@ def parseArguments():
   return ARGStemp
 
 if __name__ == '__main__':
-  global ARGS
   ARGS = parseArguments()
 
   trainModel()
