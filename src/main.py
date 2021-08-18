@@ -1,8 +1,11 @@
+import os
+import shutil
 import pickle
 import random
 import argparse
 import numpy as np
 import tensorflow as tf
+from sklearn import metrics
 
 from model import Encoder
 
@@ -76,7 +79,7 @@ def loadData():
 
 def buildModel():
   model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], embedding_dim=300)
-  optimizer = tf.keras.optimizers.RMSprop(learning_rate=0.001)
+  optimizer = tf.keras.optimizers.RMSprop(learning_rate=ARGS.learningRate)
   cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
   return model, optimizer, cross_entropy
 
@@ -149,6 +152,29 @@ def trainModel():
     nValidBatches, validationCrossEntropy = evaluateModel(model, optimizer, cross_entropy, testSet)
     print('      mean cross entropy considering %d VALIDATION batches: %f' % (nValidBatches, validationCrossEntropy))
 
+    if validationCrossEntropy < bestValidationCrossEntropy:
+      iImprovementEpochs += 1
+      iConsecutiveNonImprovements = 0
+      bestValidationCrossEntropy = validationCrossEntropy
+      bestValidationEpoch = epoch_counter
+
+      if os.path.exists(bestModelDirName):
+        shutil.rmtree(bestModelDirName)
+
+      bestModelDirName = ARGS.outFile + '.' + str(epoch_counter)
+
+      if os.path.exists(bestModelDirName):
+        shutil.rmtree(bestModelDirName)
+
+      tf.keras.models.save_model(model, bestModelDirName)
+    else:
+      print('Epoch ended without improvement.')
+      iConsecutiveNonImprovements += 1
+
+    if iConsecutiveNonImprovements > ARGS.maxConsecutiveNonImprovements: #default is 10
+      break
+
+
   # Best results
   print('--------------SUMMARY--------------')
   print('The best VALIDATION cross entropy occurred at epoch %d, the value was of %f ' % (
@@ -158,8 +184,9 @@ def trainModel():
   print('Note: the smaller the cross entropy, the better.')
   print('-----------------------------------')
 
+  evaluationResults(model, testSet)
 
-def evaluationResults():
+def evaluationResults(model, test_Set):
   batchSize = ARGS.batchSize
   predictedY_list = []
   predictedProbabilities_list = []
@@ -170,11 +197,11 @@ def evaluationResults():
   for index in range(n_batches):
     batchX = test_Set[0][index * batchSize:(index + 1) * batchSize]
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
-    xf, yf, maskf, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
+    x, _, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
     maxNumberOfAdmissions = np.max(nVisitsOfEachPatient_List)
 
-    # Prediction result predicted_y = (TODO)
-    predicted_yList.append(predicted_y.tolist()[-1])
+    predicted_y = model(x, mask)
+    predicted_yList.append(predicted_y.numpy().tolist()[-1])
 
     # traverse the predicted results, once for each patient in the batch
     for ith_patient in range(predicted_y.shape[1]):
@@ -287,7 +314,7 @@ def parseArguments():
   parser.add_argument('--nEpochs', type=int, default=1000, help='Number of training iterations.')
   parser.add_argument('--LregularizationAlpha', type=float, default=0.001, help='Alpha regularization for L2 normalization')
   parser.add_argument('--dropoutRate', type=float, default=0.45, help='Dropout probability.')
-  parser.add_argument('--learningRate', type=float, default=0.5, help='Learning rate.')
+  parser.add_argument('--learningRate', type=float, default=0.001, help='RMSProp Learning rate.')
 
   ARGStemp = parser.parse_args()
   hiddenDimSize = [int(strDim) for strDim in ARGStemp.hiddenDimSize[1:-1].split(',')]
@@ -295,7 +322,15 @@ def parseArguments():
   return ARGStemp
 
 if __name__ == '__main__':
-  ARGS = parseArguments()
+  gpus = tf.config.experimental.list_physical_devices('GPU')
+  if gpus:
+    try:
+      for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+      logical_gpus = tf.config.list_logical_devices('GPU')
+      print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+      print(e)
 
+  ARGS = parseArguments()
   trainModel()
-  evaluationResults()
