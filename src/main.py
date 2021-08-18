@@ -78,7 +78,7 @@ def loadData():
   return trainSet, testSet
 
 def buildModel():
-  model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], embedding_dim=300)
+  model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
   optimizer = tf.keras.optimizers.RMSprop(learning_rate=ARGS.learningRate)
   train_loss = tf.keras.metrics.Mean()
   train_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
@@ -99,7 +99,6 @@ def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
     x, y, mask, _ = prepareHotVectors(batchX, batchY)
 
-    y = tf.transpose(y, [1,0,2])
     predictions = model(x, mask)
     loss_value = test_cross_entropy(y, predictions)
     crossEntropy = test_loss(loss_value).numpy()
@@ -113,7 +112,6 @@ def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
 
 
 def applyGradient(model, optimizer, train_loss, cross_entropy, x, y, mask):
-  y = tf.transpose(y, [1,0,2])
   with tf.GradientTape() as tape:
     tape.watch(x)
     predictions = model(x, mask)
