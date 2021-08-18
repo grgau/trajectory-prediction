@@ -80,22 +80,29 @@ def loadData():
 def buildModel():
   model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], embedding_dim=300)
   optimizer = tf.keras.optimizers.RMSprop(learning_rate=ARGS.learningRate)
-  cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
-  return model, optimizer, cross_entropy
+  train_loss = tf.keras.metrics.Mean()
+  train_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
+  test_loss = tf.keras.metrics.Mean()
+  test_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
+  return model, optimizer, train_loss, train_cross_entropy, test_loss, test_cross_entropy
 
-def evaluateModel(model, optimizer, cross_entropy, test_Set):
+def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
   batchSize = ARGS.batchSize
   n_batches = int(np.ceil(float(len(test_Set[0])) / float(batchSize))) #default batch size is 100
   crossEntropySum = 0.0
   dataCount = 0.0
 
+  test_loss.reset_states()
   #computes de crossEntropy for all the elements in the test_Set, using the batch scheme of partitioning
   for index in range(n_batches):
     batchX = test_Set[0][index * batchSize:(index + 1) * batchSize]
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
-    x, y, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
+    x, y, mask, _ = prepareHotVectors(batchX, batchY)
 
-    crossEntropy = applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPatient_List)
+    y = tf.transpose(y, [1,0,2])
+    predictions = model(x, mask)
+    loss_value = test_cross_entropy(y, predictions)
+    crossEntropy = test_loss(loss_value).numpy()
 
     #accumulation by simple summation taking the batch size into account
     crossEntropySum += crossEntropy * len(batchX)
@@ -105,7 +112,7 @@ def evaluateModel(model, optimizer, cross_entropy, test_Set):
   return n_batches, crossEntropySum / dataCount
 
 
-def applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPatient_List):
+def applyGradient(model, optimizer, train_loss, cross_entropy, x, y, mask):
   y = tf.transpose(y, [1,0,2])
   with tf.GradientTape() as tape:
     tape.watch(x)
@@ -114,14 +121,14 @@ def applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPati
 
   gradients = tape.gradient(loss_value, model.trainable_weights)
   optimizer.apply_gradients(zip(gradients, model.trainable_weights))
-  return loss_value
+  return train_loss(loss_value).numpy()
 
 def trainModel():
   print("==> data loading")
   trainSet, testSet = loadData()
 
   print("==> model building")
-  model, optimizer, cross_entropy = buildModel()
+  model, optimizer, train_loss, train_cross_entropy, test_loss, test_cross_entropy = buildModel()
 
   print ("==> training and validation")
   batchSize = ARGS.batchSize
@@ -138,18 +145,19 @@ def trainModel():
   for epoch_counter in range(ARGS.nEpochs):
     iteration = 0
     trainCrossEntropyVector = []
+    train_loss.reset_states()
     for index in random.sample(range(n_batches), n_batches):
       batchX = trainSet[0][index*batchSize:(index+1)*batchSize]
       batchY = trainSet[1][index*batchSize:(index + 1)*batchSize]
-      x, y, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
+      x, y, mask, _ = prepareHotVectors(batchX, batchY)
       x += np.random.normal(0, 0.1, x.shape)
 
-      loss_value = applyGradient(model, optimizer, cross_entropy, x, y, mask, nVisitsOfEachPatient_List)
+      loss_value = applyGradient(model, optimizer, train_loss, train_cross_entropy, x, y, mask)
       trainCrossEntropyVector.append(loss_value)
       iteration += 1
 
     print('-> Epoch: %d, mean cross entropy considering %d TRAINING batches: %f' % (epoch_counter, n_batches, np.mean(trainCrossEntropyVector)))
-    nValidBatches, validationCrossEntropy = evaluateModel(model, optimizer, cross_entropy, testSet)
+    nValidBatches, validationCrossEntropy = evaluateModel(model, optimizer, test_loss, test_cross_entropy, testSet)
     print('      mean cross entropy considering %d VALIDATION batches: %f' % (nValidBatches, validationCrossEntropy))
 
     if validationCrossEntropy < bestValidationCrossEntropy:
@@ -191,7 +199,6 @@ def evaluationResults(model, test_Set):
   predictedY_list = []
   predictedProbabilities_list = []
   actualY_list = []
-  predicted_yList = []
   n_batches = int(np.ceil(float(len(test_Set[0])) / float(batchSize))) #default batch size is 100
 
   for index in range(n_batches):
@@ -201,7 +208,6 @@ def evaluationResults(model, test_Set):
     maxNumberOfAdmissions = np.max(nVisitsOfEachPatient_List)
 
     predicted_y = model(x, mask)
-    predicted_yList.append(predicted_y.numpy().tolist()[-1])
 
     # traverse the predicted results, once for each patient in the batch
     for ith_patient in range(predicted_y.shape[1]):
