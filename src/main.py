@@ -101,6 +101,7 @@ def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
 
     predictions = model(x, mask)
     loss_value = test_cross_entropy(y, predictions)
+    loss_value *= mask
     crossEntropy = test_loss(loss_value).numpy()
 
     #accumulation by simple summation taking the batch size into account
@@ -116,6 +117,7 @@ def applyGradient(model, optimizer, train_loss, cross_entropy, x, y, mask):
     tape.watch(x)
     predictions = model(x, mask)
     loss_value = cross_entropy(y, predictions)
+    loss_value *= mask
 
   gradients = tape.gradient(loss_value, model.trainable_weights)
   optimizer.apply_gradients(zip(gradients, model.trainable_weights))
