@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from sklearn import metrics
 
-from model import Encoder
+from model import Encoder, Decoder, EncoderDecoder
 
 global ARGS
 
@@ -78,7 +78,9 @@ def loadData():
   return trainSet, testSet
 
 def buildModel():
-  model = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
+  encoder = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
+  decoder = Decoder(number_of_codes=ARGS.numberOfInputCodes, decoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate, epsilon=ARGS.LregularizationAlpha)
+  model = EncoderDecoder(encoder, decoder)
   optimizer = tf.keras.optimizers.RMSprop(learning_rate=ARGS.learningRate)
   train_loss = tf.keras.metrics.Mean()
   train_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
@@ -86,7 +88,7 @@ def buildModel():
   test_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
   return model, optimizer, train_loss, train_cross_entropy, test_loss, test_cross_entropy
 
-def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
+def evaluateModel(model, test_loss, test_cross_entropy, test_Set):
   batchSize = ARGS.batchSize
   n_batches = int(np.ceil(float(len(test_Set[0])) / float(batchSize))) #default batch size is 100
   crossEntropySum = 0.0
@@ -99,9 +101,8 @@ def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
     x, y, mask, _ = prepareHotVectors(batchX, batchY)
 
-    predictions = model(x, mask)
+    predictions, _, = model(x, mask)
     loss_value = test_cross_entropy(y, predictions)
-    loss_value *= mask
     crossEntropy = test_loss(loss_value).numpy()
 
     #accumulation by simple summation taking the batch size into account
@@ -112,15 +113,15 @@ def evaluateModel(model, optimizer, test_loss, test_cross_entropy, test_Set):
   return n_batches, crossEntropySum / dataCount
 
 
-def applyGradient(model, optimizer, train_loss, cross_entropy, x, y, mask):
+def applyGradient(model, optimizer, train_loss, train_cross_entropy, x, y, mask):
   with tf.GradientTape() as tape:
     tape.watch(x)
-    predictions = model(x, mask)
-    loss_value = cross_entropy(y, predictions)
-    loss_value *= mask
 
-  gradients = tape.gradient(loss_value, model.trainable_weights)
-  optimizer.apply_gradients(zip(gradients, model.trainable_weights))
+    predictions, variables = model(x, mask)
+    loss_value = train_cross_entropy(y, predictions)
+
+  gradients = tape.gradient(loss_value, variables)
+  optimizer.apply_gradients(zip(gradients, variables))
   return train_loss(loss_value).numpy()
 
 def trainModel():
@@ -157,7 +158,7 @@ def trainModel():
       iteration += 1
 
     print('-> Epoch: %d, mean cross entropy considering %d TRAINING batches: %f' % (epoch_counter, n_batches, np.mean(trainCrossEntropyVector)))
-    nValidBatches, validationCrossEntropy = evaluateModel(model, optimizer, test_loss, test_cross_entropy, testSet)
+    nValidBatches, validationCrossEntropy = evaluateModel(model, test_loss, test_cross_entropy, testSet)
     print('      mean cross entropy considering %d VALIDATION batches: %f' % (nValidBatches, validationCrossEntropy))
 
     if validationCrossEntropy < bestValidationCrossEntropy:
@@ -207,7 +208,7 @@ def evaluationResults(model, test_Set):
     x, _, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
     maxNumberOfAdmissions = np.max(nVisitsOfEachPatient_List)
 
-    predicted_y = model(x, mask)
+    predicted_y, _ = model(x, mask)
 
     # traverse the predicted results, once for each patient in the batch
     for ith_patient in range(predicted_y.shape[1]):
@@ -319,7 +320,7 @@ def parseArguments():
   parser.add_argument('--batchSize', type=int, default=100, help='Batch size.')
   parser.add_argument('--nEpochs', type=int, default=1000, help='Number of training iterations.')
   parser.add_argument('--LregularizationAlpha', type=float, default=0.001, help='Alpha regularization for L2 normalization')
-  parser.add_argument('--dropoutRate', type=float, default=0.45, help='Dropout probability.')
+  parser.add_argument('--dropoutRate', type=float, default=0.1, help='Dropout probability.')
   parser.add_argument('--learningRate', type=float, default=0.001, help='RMSProp Learning rate.')
 
   ARGStemp = parser.parse_args()
