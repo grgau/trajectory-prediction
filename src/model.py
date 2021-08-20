@@ -6,12 +6,12 @@ class Encoder(tf.keras.layers.Layer):
     self.encoder_units = encoder_units
     self.dropout = dropout
 
-    self.lstm = tf.keras.layers.LSTM(self.encoder_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_initializer='glorot_uniform')
-    self.apply_mask = tf.keras.layers.Lambda(lambda x: tf.transpose(x[0], [1,0,2]) * tf.expand_dims(x[1], axis=-1))
+    self.lstm = tf.keras.layers.LSTM(self.encoder_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_initializer='glorot_uniform', time_major=True)
+    self.apply_mask = tf.keras.layers.Lambda(lambda x: x[0] * tf.expand_dims(x[1], axis=-1))
 
   def call(self, input, mask, state=None):
-    lstm_output, state_h, state_c = self.lstm(input, initial_state=state)
-    output = self.apply_mask([lstm_output, mask])
+    output, state_h, state_c = self.lstm(input, initial_state=state)
+    output = self.apply_mask([output, mask])
     return output, state_h, state_c
 
 class Decoder(tf.keras.layers.Layer):
@@ -20,12 +20,12 @@ class Decoder(tf.keras.layers.Layer):
     self.decoder_units = decoder_units
     self.dropout = dropout
 
-    self.lstm = tf.keras.layers.LSTM(self.decoder_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_initializer='glorot_uniform')
-    self.apply_mask = tf.keras.layers.Lambda(lambda x: tf.transpose(x[0], [1,0,2]) * tf.expand_dims(x[1], axis=-1))
+    self.lstm = tf.keras.layers.LSTM(self.decoder_units, return_sequences=True, return_state=True, dropout=self.dropout, recurrent_initializer='glorot_uniform', time_major=True)
+    self.apply_mask = tf.keras.layers.Lambda(lambda x: x[0] * tf.expand_dims(x[1], axis=-1))
 
   def call(self, input, mask, state):
-    lstm_output, state_h, state_c = self.lstm(input, initial_state=state)
-    output = self.apply_mask([lstm_output, mask])
+    output, state_h, state_c = self.lstm(input, initial_state=state)
+    output = self.apply_mask([output, mask])
     # output = tf.reshape(output, (-1, output.shape[2])) # For sparse loss?
     return output, state_h, state_c
 
@@ -67,8 +67,8 @@ class EncoderDecoder(tf.keras.layers.Layer):
     self.dense = tf.keras.layers.Dense(self.number_of_codes, activation='relu', activity_regularizer=tf.keras.regularizers.l2(epsilon))
 
   def call(self, input, target, mask):
-    input = tf.transpose(input, [1,0,2]) # Make input to be (batch_size x sequence_length x number_of_codes)
-    target = tf.transpose(target, [1,0,2]) # Make target to be (batch_size x sequence_length x number_of_codes)
+    # input = tf.transpose(input, [1,0,2]) # Make input to be (batch_size x sequence_length x number_of_codes)
+    # target = tf.transpose(target, [1,0,2]) # Make target to be (batch_size x sequence_length x number_of_codes)
     enc_output = self.encoder(input, mask)
     enc_states = enc_output[1:]
     dec_states = enc_states
@@ -77,7 +77,7 @@ class EncoderDecoder(tf.keras.layers.Layer):
     context_and_dec_output = tf.concat([context_vector, dec_output[0]], axis=-1)
     attention_vector = self.Wc(context_and_dec_output)
     output = self.dense(attention_vector)
-    output = tf.nn.softmax(output[0])
+    # output = tf.nn.softmax(output[0])
 
     # variables = self.encoder.trainable_variables + self.decoder.trainable_variables
     return output#, variables

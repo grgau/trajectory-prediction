@@ -113,6 +113,7 @@ def evaluateModel(model, test_loss, test_cross_entropy, test_Set):
 
     predictions = model(x, y, mask)
     loss_value = test_cross_entropy(y, predictions)
+    loss_value *= mask
     crossEntropy = test_loss(loss_value).numpy()
 
     #accumulation by simple summation taking the batch size into account
@@ -129,6 +130,7 @@ def applyGradient(model, optimizer, train_loss, train_cross_entropy, x, y, mask)
 
     predictions = model(x, y, mask)
     loss_value = train_cross_entropy(y, predictions)
+    loss_value *= mask
 
   gradients = tape.gradient(loss_value, model.trainable_variables)
   optimizer.apply_gradients(zip(gradients, model.trainable_variables))
@@ -195,14 +197,15 @@ def trainModel():
 
 
   # Best results
-  print('--------------SUMMARY--------------')
+  print('\n--------------SUMMARY--------------')
   print('The best VALIDATION cross entropy occurred at epoch %d, the value was of %f ' % (
   bestValidationEpoch, bestValidationCrossEntropy))
   print('Best model file: ' + bestModelDirName)
   print('Number of improvement epochs: ' + str(iImprovementEpochs) + ' out of ' + str(epoch_counter + 1) + ' possible improvements.')
   print('Note: the smaller the cross entropy, the better.')
-  print('-----------------------------------')
+  print('-----------------------------------\n')
 
+  print ("==> evaluating results")
   evaluationResults(model, testSet)
 
 def evaluationResults(model, test_Set):
