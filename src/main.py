@@ -1,4 +1,6 @@
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+
 import shutil
 import pickle
 import random
@@ -7,7 +9,9 @@ import numpy as np
 import tensorflow as tf
 from sklearn import metrics
 
-from model import Encoder, Decoder, EncoderDecoder
+from model import BahdanauAttention, Encoder, Decoder, BahdanauAttention, EncoderDecoder, Scheduler
+
+tf.get_logger().setLevel('ERROR')
 
 global ARGS
 
@@ -78,10 +82,16 @@ def loadData():
   return trainSet, testSet
 
 def buildModel():
-  encoder = Encoder(number_of_codes=ARGS.numberOfInputCodes, encoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
-  decoder = Decoder(number_of_codes=ARGS.numberOfInputCodes, decoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate, epsilon=ARGS.LregularizationAlpha)
-  model = EncoderDecoder(encoder, decoder)
-  optimizer = tf.keras.optimizers.RMSprop(learning_rate=ARGS.learningRate)
+  encoder = Encoder(encoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
+  decoder = Decoder(decoder_units=ARGS.hiddenDimSize[-1], dropout=ARGS.dropoutRate)
+  attention = BahdanauAttention(attention_units=ARGS.hiddenDimSize[-1])
+  model = EncoderDecoder(number_of_codes=ARGS.numberOfInputCodes, encoder=encoder, decoder=decoder, attention=attention, epsilon=ARGS.LregularizationAlpha)
+
+  optimizer = tf.keras.optimizers.RMSprop(learning_rate=Scheduler(0.005))
+  # optimizer = tf.keras.optimizers.Adadelta(learning_rate=learning_rate, rho=0.95, epsilon=1e-06)
+  # optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, beta_1=0.9, beta_2=0.98,epsilon=1e-9) 
+  # optimizer = tf.keras.optimizers.SGD(learning_rate=Scheduler(0.01))
+
   train_loss = tf.keras.metrics.Mean()
   train_cross_entropy = tf.keras.losses.CategoricalCrossentropy(from_logits=False)
   test_loss = tf.keras.metrics.Mean()
@@ -101,7 +111,7 @@ def evaluateModel(model, test_loss, test_cross_entropy, test_Set):
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
     x, y, mask, _ = prepareHotVectors(batchX, batchY)
 
-    predictions, _, = model(x, mask)
+    predictions = model(x, y, mask)
     loss_value = test_cross_entropy(y, predictions)
     crossEntropy = test_loss(loss_value).numpy()
 
@@ -117,11 +127,11 @@ def applyGradient(model, optimizer, train_loss, train_cross_entropy, x, y, mask)
   with tf.GradientTape() as tape:
     tape.watch(x)
 
-    predictions, variables = model(x, mask)
+    predictions = model(x, y, mask)
     loss_value = train_cross_entropy(y, predictions)
 
-  gradients = tape.gradient(loss_value, variables)
-  optimizer.apply_gradients(zip(gradients, variables))
+  gradients = tape.gradient(loss_value, model.trainable_variables)
+  optimizer.apply_gradients(zip(gradients, model.trainable_variables))
   return train_loss(loss_value).numpy()
 
 def trainModel():
@@ -205,10 +215,10 @@ def evaluationResults(model, test_Set):
   for index in range(n_batches):
     batchX = test_Set[0][index * batchSize:(index + 1) * batchSize]
     batchY = test_Set[1][index * batchSize:(index + 1) * batchSize]
-    x, _, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
+    x, y, mask, nVisitsOfEachPatient_List = prepareHotVectors(batchX, batchY)
     maxNumberOfAdmissions = np.max(nVisitsOfEachPatient_List)
 
-    predicted_y, _ = model(x, mask)
+    predicted_y = model(x, y, mask)
 
     # traverse the predicted results, once for each patient in the batch
     for ith_patient in range(predicted_y.shape[1]):
@@ -316,6 +326,7 @@ def parseArguments():
   parser.add_argument('outFile', metavar='out_file', default='model_output', help='Any file directory to store the model.')
   parser.add_argument('--maxConsecutiveNonImprovements', type=int, default=10, help='Training wiil run until reaching the maximum number of epochs without improvement before stopping the training')
   parser.add_argument('--hiddenDimSize', type=str, default='[271]', help='Number of layers and their size - for example [100,200] refers to two layers with 100 and 200 nodes.')
+  parser.add_argument('--attentionDimSize', type=int, default=20, help='Number of attention units')
   parser.add_argument('--state', type=str, default='cell', help='Pass cell, hidden or attention to fully connected layer')
   parser.add_argument('--batchSize', type=int, default=100, help='Batch size.')
   parser.add_argument('--nEpochs', type=int, default=1000, help='Number of training iterations.')
