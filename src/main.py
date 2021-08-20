@@ -87,8 +87,8 @@ def buildModel():
   attention = BahdanauAttention(attention_units=ARGS.hiddenDimSize[-1])
   model = EncoderDecoder(number_of_codes=ARGS.numberOfInputCodes, encoder=encoder, decoder=decoder, attention=attention, epsilon=ARGS.LregularizationAlpha)
 
-  optimizer = tf.keras.optimizers.RMSprop(learning_rate=Scheduler(0.005))
-  # optimizer = tf.keras.optimizers.Adadelta(learning_rate=learning_rate, rho=0.95, epsilon=1e-06)
+  # optimizer = tf.keras.optimizers.RMSprop(learning_rate=Scheduler(0.005))
+  optimizer = tf.keras.optimizers.Adadelta(learning_rate=ARGS.learningRate, rho=0.95, epsilon=1e-06)
   # optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, beta_1=0.9, beta_2=0.98,epsilon=1e-9) 
   # optimizer = tf.keras.optimizers.SGD(learning_rate=Scheduler(0.01))
 
